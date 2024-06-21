@@ -1,23 +1,16 @@
-//const express = require('express');
 import express from 'express';
-//const http = require('http');
 import * as http from 'http';
-//const fs = require('fs');
 import * as fs from 'fs';
-//const mm = require('music-metadata');
 import * as mm from 'music-metadata';
-
 
 const PORT = 3000;
 const app = express();
+const BASE_PATH = 'D:/Music';  // Use forward slashes in the path
 
 
-const BASE_PATH = '/home/prajyot-mane/Music';
-
-async function parseAudioMetadata(musicFilePath){
-    try{
+async function parseAudioMetadata(musicFilePath) {
+    try {
         const metadata = await mm.parseFile(musicFilePath);
-        // console.log(metadata);
         return metadata;
     } catch (err) {
         console.log(err);
@@ -26,36 +19,70 @@ async function parseAudioMetadata(musicFilePath){
 
 async function getMusicFiles(musicDirPath) {
     let songs = [];
-    try{
+    try {
         let files = await fs.promises.readdir(musicDirPath);
-        for(let file of files){
-            // console.log("Inside getMusicFiles() :-");
+        for (let file of files) {
             let complete_path = BASE_PATH + '/' + file;
             const metadata1 = await parseAudioMetadata(complete_path);
-            // console.log(metadata1.common);
-            songs.push(metadata1.common);
+            if (metadata1 && metadata1.common) { // Added check to ensure metadata1 and metadata1.common exist
+                songs.push({
+                    file: complete_path,
+                    metadata: metadata1.common
+                });
+            }
         }
-    } catch(err){
+    } catch (err) {
         console.log(err);
     }
-    // console.log(songs);
     return songs;
 }
-// getMusicFiles(BASE_PATH);
-// parseAudioMetadata(BASE_PATH+'/'+"06 Can't Tell Me Nothing.mp3"); //called
 
-app.get('/', (req, res)=>{
+app.get('/', (req, res) => {
     return res.send('home page');
 });
 
-app.get('/songs', async(req, res)=> {
-    console.log('Requested /songs');
-    let songsmetadata = await getMusicFiles(BASE_PATH);
-    console.log(songsmetadata);
-    // res.json([{name:"Prajyot",age:56}])
-    res.json(songsmetadata);
+// Updated /songs route to stream music file
+app.get('/songs/:filename', async (req, res) => {
+    console.log('Requested /songs/' + req.params.filename);
+    try {
+        const filePath = BASE_PATH + '/' + req.params.filename;
+        const stat = fs.statSync(filePath);
+        const fileSize = stat.size;
+        const range = req.headers.range;
+
+        if (range) {
+            const parts = range.replace(/bytes=/, "").split("-");
+            const start = parseInt(parts[0], 10);
+            const end = parts[1]
+                ? parseInt(parts[1], 10)
+                : fileSize - 1;
+
+            const chunksize = (end - start) + 1;
+            const file = fs.createReadStream(filePath, { start, end });
+            const head = {
+                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                'Accept-Ranges': 'bytes',
+                'Content-Length': chunksize,
+                'Content-Type': 'audio/mpeg',
+            };
+
+            res.writeHead(206, head);
+            file.pipe(res);
+        } else {
+            const head = {
+                'Content-Length': fileSize,
+                'Content-Type': 'audio/mpeg',
+            };
+
+            res.writeHead(200, head);
+            fs.createReadStream(filePath).pipe(res);
+        }
+    } catch (err) {
+        console.log(err);
+        res.status(500).send('Error streaming the song');
+    }
 });
 
+// Start the server
+app.listen(PORT, '0.0.0.0', () => console.log("Server Started!"));
 
-
-app.listen(PORT, () => console.log("Server Started!"));
